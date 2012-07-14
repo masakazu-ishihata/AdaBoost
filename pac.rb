@@ -7,9 +7,8 @@
 @n = 5
 @m = 5
 @k = 2
+@t = 100
 @@swap = false
-@@ep = 0.1
-@@de = 0.1
 
 ################################################################################
 # Arguments
@@ -33,6 +32,9 @@ OptionParser.new { |opts|
   opts.on("-k [int]", "length of decision list ") { |f|
     @k = f.to_i
   }
+  opts.on("-t [int]", "maximum number of iteration of AdaBoost") { |f|
+    @t = f.to_i
+  }
   opts.on("-s", "--swap", "swap te & tr size"){
     @@swap = true
   }
@@ -44,27 +46,42 @@ OptionParser.new { |opts|
 # data
 ################################################################################
 class MyData
+  def initialize(ary)
+    @c = ary[0]
+    @a = ary[1..ary.size-1]
+  end
+  attr_reader :c, :a
+
+  def show
+    puts "#{@c} : #{a}"
+  end
+end
+class MyDataset
   #### new ####
   def initialize(file)
     @file = file
+    @size = 0
     @data = []
     @vals = []
 
     # all values replaced by numbers
     open(file).read.split(/\n/).each do |line|
       ary = line.split(' ')
+
       datum = []
       for i in 0..ary.size-1
         @vals[i] = Hash.new(nil)         if @vals[i] == nil
         @vals[i][ary[i]] = @vals[i].size if @vals[i][ary[i]] == nil
         datum.push(@vals[i][ary[i]])
       end
-      @data.push(datum)
-    end
 
-    show
+      @size += 1
+      @data.push( MyData.new(datum) )
+    end
   end
-  attr_reader :data
+
+  #### accessors ####
+  attr_reader :data, :size
 
   #### # values of each attributes ####
   def property
@@ -73,7 +90,7 @@ class MyData
 
   #### split the dataset into n datasets ####
   def split(n)
-    size = (@data.size / n.to_f).to_i # size of a sub-dataset
+    size = (@size / n.to_f).to_i # size of a sub-dataset
     data = @data.shuffle
 
     sets = []
@@ -103,22 +120,11 @@ class MyData
     num = Array.new(c){|i| 0}
     ptn = Hash.new([])
     @data.each do |datum|
-      dc = datum[0]
-      da = datum[1..datum.size-1]
-      num[dc] += 1
-      ptn[da].push(dc).uniq
+      num[ datum.c ] += 1
     end
     for i in 0..c-1
       puts "class #{i+1} = #{num[i]}"
     end
-    ptn.each do |key|
-      puts "#{key} has multiple class" if ptn[key].size > 1
-    end
-
-    @data[0..10].each do |datum|
-      puts "#{datum}"
-    end
-    puts "..."
   end
 end
 
@@ -141,9 +147,7 @@ class MyLearner
   #### learn from data ####
   def learn(data)
     data.each do |datum|
-      dc = datum[0]
-      da = datum[1..datum.size-1]
-      learn_i(dc, da)
+      learn_i(datum.c, datum.a)
     end
   end
   def learn_i(dc, da)
@@ -155,10 +159,8 @@ class MyLearner
 
     # predict for each data
     data.each do |datum|
-      dc = datum[0]               # true class
-      da = datum[1..datum.size-1] #
-      pc = predict_i(da)        # predicted class
-      pred.push([dc, pc])
+      pc = predict_i(datum.a)        # predicted class
+      pred.push([datum.c, pc])
     end
 
     # f-measures
@@ -184,7 +186,7 @@ class MyLearner
       rec = 0 if tp + fn == 0
       pre = 0 if tp + fp == 0
 
-      f = 2 * rec * pre / (rec + pre)
+      f = 2 * rec * pre / (rec + pre) if (rec + pre) > 0
       f = 0 if rec + pre == 0
 
       ave_f += f
@@ -208,25 +210,22 @@ end
 class MyTester
   #### new ####
   def initialize(file)
-    @data = MyData.new(file)
+    @dset = MyDataset.new(file)
     @sets = nil
   end
 
   #### test : m * n-ford cross validation ####
   def test(ls, n, m)
     puts "----------------------------------------"
+    @dset.show
+    puts "----------------------------------------"
     puts "#{n}-fold cross validation * #{m} retry"
 
     # PAC
     if @@swap
-      puts "# samples s = #{(@data.data.size / n.to_i).to_i}"
+      puts "# samples s = #{(@dset.size / n.to_i).to_i}"
     else
-      puts "# samples s = #{(@data.data.size / n.to_i).to_i * (n-1)}"
-    end
-    puts "PAC (e=#{@@ep}, d=#{@@de})?"
-    for i in 0..ls.size-1
-      ls[i].reset(@data.property)
-      puts "L[#{i+1}] is PAC if s > #{ls[i].pac(@@ep, @@de)}" if ls[i].pac(@@ep, @@de) > 0
+      puts "# samples s = #{(@dset.size / n.to_i).to_i * (n-1)}"
     end
 
     puts "----------------------------------------"
@@ -248,7 +247,7 @@ class MyTester
 
   #### n-fold cross validation ####
   def cv(ls, n)
-    @sets = @data.split(n)           # testing datasets
+    @sets = @dset.split(n)           # testing datasets
     afs = Array.new(ls.size){|i| 0}  # averaged f-measures of each learner
 
     for i in 0..n-1
@@ -267,7 +266,7 @@ class MyTester
   #### i-th fold ####
   def fold(ls, i)
     te = @sets[i]          # test set
-    tr = @data.data - te   # training set
+    tr = @dset.data - te   # training set
     if @@swap
       tmp = tr
       tr = te
@@ -278,7 +277,7 @@ class MyTester
 
     for i in 0..ls.size-1
       # reset
-      ls[i].reset(@data.property)
+      ls[i].reset(@dset.property)
 
       # learn
       ls[i].learn(tr)
@@ -404,9 +403,7 @@ class MyDLLearner < MyLearner
     # divide data by class
     ss = Array.new(@c){|i| []}
     data.each do |datum|
-      dc = datum[0]
-      da = datum[1..datum.size-1]
-      ss[dc].push(da)
+      ss[datum.c].push(datum.a)
     end
 
     # learn decision list
@@ -529,9 +526,116 @@ class MyDLLearner < MyLearner
 end
 
 ################################################################################
-# AdaBoost
+# AdaBoost : weak hypothesis = single decision rule
 ################################################################################
-class AdaBoost
+class MyWeakLearner < MyLearner
+  def initialize(i, v, c)
+    @i = i
+    @v = v
+    @c = c
+  end
+
+  def predict_i(da)
+    return @c  if da[@i] == @v
+    return 1   if @c == 0
+    return 0
+  end
+end
+
+class MyAdaBoost < MyLearner
+  def initialize(t)
+    @t = t
+  end
+
+  #### overwrite init ####
+  def init
+    @hs = []     # hypotheses
+    @as = []     # alphas : importance rate
+
+    # weak learners (they learn NOTHING)
+    @wl = []
+    for i in 0..@n-1
+      for v in 0..@v[i]-1
+        for c in 0..@c-1
+          @wl.push(MyWeakLearner.new(i, v, c))
+        end
+      end
+    end
+  end
+
+  #### overwrite learn ####
+  def learn(data)
+    # initial weight
+    m = data.size
+    w = Array.new(m){|i| 1 / m.to_f}
+    t = 0
+
+    begin
+      t += 1
+
+      h = best_wl(data, w)                 # best hypothesis
+      g = 0.5 - error(h, data, w)          # gamma : advantage
+      b = Math.sqrt( (1-2*g) / (1+2*g) )   # beta
+      a = -Math.log(b)                     # alpha : importance rate
+
+      @hs.push(h)
+      @as.push(a)
+
+      # udate weights
+      e = 0
+      for i in 0..data.size-1
+        pc = predict_i(data[i].a)
+        w[i] *= b if data[i].c == pc
+        w[i] /= b if data[i].c != pc
+        e += 1    if data[i].c != pc
+      end
+    end while e > 0 && t < @t
+  end
+
+  #### choose a best weak learner (hypothesis) ####
+  def best_wl(data, weight)
+    best = nil
+    min = 0
+
+    @wl.each do |wl|
+      e = error(wl, data, weight)
+      if best == nil || min > e
+        best = wl
+        min = e
+      end
+    end
+
+    best
+  end
+
+  #### error ####
+  def error(wl, data, weight)
+    e = 0
+    for i in 0..data.size-1
+      e += weight[i] if data[i].c != wl.predict_i(data[i].a)
+    end
+    e
+  end
+
+  #### overwrite predict ####
+  def predict_i(da)
+    vote = Array.new(@c){|i| 0}
+    for t in 0..@hs.size-1
+      pc = @hs[t].predict_i(da)
+      vote[pc] += @as[t]
+    end
+
+    m   = 0
+    max = vote[0]
+    for c in 1..@c-1
+      if max < vote[c]
+        m   = c
+        max = vote[c]
+      end
+    end
+
+    m
+  end
 end
 
 ################################################################################
@@ -540,9 +644,16 @@ end
 # learners
 ls = []
 ls.push(MyLearner.new)                   # random
-ls.push(MyDisjLearner.new)               # disj learner
 ls.push(MyNaiveBayesLearner.new)         # naive Bayes
+ls.push(MyDisjLearner.new)               # disj learner
 ls.push(MyDLLearner.new(@k))             # k-DL learner
+ls.push(MyAdaBoost.new(@t))              # AdaBoost with maximum iteration t
+
+puts "learner 1 : random"
+puts "learner 2 : naive Bayes"
+puts "learner 3 : Disj learner"
+puts "learner 4 : k-DL learner"
+puts "learner 5 : AdaBoost"
 
 # repeat n-fold closs validation m times
 t = MyTester.new(@file)

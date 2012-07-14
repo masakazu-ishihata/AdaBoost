@@ -3,7 +3,7 @@
 ################################################################################
 # default
 ################################################################################
-@file = "mushroom.txt"
+@file = "votes.txt"
 @n = 5
 @m = 5
 @k = 2
@@ -159,8 +159,7 @@ class MyLearner
 
     # predict for each data
     data.each do |datum|
-      pc = predict_i(datum.a)        # predicted class
-      pred.push([datum.c, pc])
+      pred.push([datum.c, predict_i(datum.a)])
     end
 
     # f-measures
@@ -267,6 +266,7 @@ class MyTester
   def fold(ls, i)
     te = @sets[i]          # test set
     tr = @dset.data - te   # training set
+
     if @@swap
       tmp = tr
       tr = te
@@ -275,15 +275,16 @@ class MyTester
 
     fs = [] # averaged f-measures
 
-    for i in 0..ls.size-1
+    for j in 0..ls.size-1
       # reset
-      ls[i].reset(@dset.property)
+      ls[j].reset(@dset.property)
 
       # learn
-      ls[i].learn(tr)
+      ls[j].learn(tr)
+#      puts "#{i}-fold #{j}-th learner -> #{ls[j].predict(tr)}"
 
       # test
-      f = ls[i].predict(te)
+      f = ls[j].predict(te)
       fs.push(f)
     end
 
@@ -317,14 +318,16 @@ class MyNaiveBayesLearner < MyLearner
     lpc = Array.new(@c){|c| 0}
     for c in 0..@c-1
       for i in 0..@n-1
-        lpc[c] += Math.log(@nciv[c][i][da[i]]) - Math.log(@nc[c])
+        lpc[c] += Math.log(@nciv[c][i][da[i]]) - Math.log(@nc[c]) if @nciv[c][i][da[i]] > 0
       end
     end
 
     # log p(c)
     n = 0
     @nc.each{|c| n += c}
-    lpc[c] += Math.log(@nc[c]) - Math.log(n) 
+    for c in 0..@c-1
+      lpc[c] += Math.log(@nc[c]) - Math.log(n)
+    end
 
     # max_c = argmax_{c} log p(da | c) + log p(c)
     max_c = 0
@@ -454,7 +457,7 @@ class MyDLLearner < MyLearner
         for v in 0..@v[i]-1
           cl = [i, v]            # add a new literal
           ce = explained(cl, e)  # remove samples not explained by cl
-          cs.push([t.clone + [cl], ce]) if eval(ce.map{|i| i.size}.join(" + ")) > 0
+          cs.push([t.clone + [cl], ce]) if eval(ce.map{|s| s.size}.join(" + ")) > 0
         end
       end
     end
@@ -536,8 +539,8 @@ class MyWeakLearner < MyLearner
   end
 
   def predict_i(da)
-    return @c  if da[@i] == @v
-    return 1   if @c == 0
+    return @c if da[ @i ] == @v
+    return 1  if @c == 0
     return 0
   end
 end
@@ -551,9 +554,9 @@ class MyAdaBoost < MyLearner
   def init
     @hs = []     # hypotheses
     @as = []     # alphas : importance rate
+    @wl = []     # weak learners
 
-    # weak learners (they learn NOTHING)
-    @wl = []
+    # enumrate literals
     for i in 0..@n-1
       for v in 0..@v[i]-1
         for c in 0..@c-1
@@ -570,26 +573,42 @@ class MyAdaBoost < MyLearner
     w = Array.new(m){|i| 1 / m.to_f}
     t = 0
 
+    best_t = 0
+    best_e = m
+
     begin
       t += 1
 
       h = best_wl(data, w)                 # best hypothesis
-      g = 0.5 - error(h, data, w)          # gamma : advantage
+      e = error(h, data, w)                # error
+      g = 0.5 - e                          # gamma : advantage
       b = Math.sqrt( (1-2*g) / (1+2*g) )   # beta
+      b = 1e-10 if b == 0
       a = -Math.log(b)                     # alpha : importance rate
+
+      break if a == 0
 
       @hs.push(h)
       @as.push(a)
 
       # udate weights
-      e = 0
+      e0 = 0.0
       for i in 0..data.size-1
         pc = predict_i(data[i].a)
         w[i] *= b if data[i].c == pc
         w[i] /= b if data[i].c != pc
-        e += 1    if data[i].c != pc
+        e0 += 1    if data[i].c != pc
       end
-    end while e > 0 && t < @t
+
+      if e0 < best_e
+        best_t = t
+        best_e = e0
+      end
+    end while e0 > 0 && t < @t
+
+    # back to best
+    @hs = @hs[0..best_t]
+    @as = @as[0..best_t]
   end
 
   #### choose a best weak learner (hypothesis) ####
@@ -643,17 +662,20 @@ end
 ################################################################################
 # learners
 ls = []
-ls.push(MyLearner.new)                   # random
-ls.push(MyNaiveBayesLearner.new)         # naive Bayes
-ls.push(MyDisjLearner.new)               # disj learner
-ls.push(MyDLLearner.new(@k))             # k-DL learner
-ls.push(MyAdaBoost.new(@t))              # AdaBoost with maximum iteration t
-
+ls.push(MyLearner.new)
 puts "learner 1 : random"
-puts "learner 2 : naive Bayes"
-puts "learner 3 : Disj learner"
-puts "learner 4 : k-DL learner"
-puts "learner 5 : AdaBoost"
+
+ls.push(MyNaiveBayesLearner.new)
+puts "learner #{ls.size} : naive Bayes"
+
+ls.push(MyDisjLearner.new)
+puts "learner #{ls.size} : Disj learner"
+
+ls.push(MyDLLearner.new(@k))
+puts "learner #{ls.size} : #{@k}-DL learner"
+
+ls.push(MyAdaBoost.new(@t))
+puts "learner #{ls.size} : AdaBoost (#{@t})"
 
 # repeat n-fold closs validation m times
 t = MyTester.new(@file)

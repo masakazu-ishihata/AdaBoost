@@ -128,44 +128,48 @@ class MyTester
   def initialize(file)
     @data = MyData.new(file)
     @sets = nil
-    @data.show
   end
 
   #### test learners by n-fold closs validation ####
   def test(ls, n)
-    @sets = @data.split(n)
+    @sets = @data.split(n)           # testing datasets
+    afs = Array.new(ls.size){|i| 0}  # averaged f-measures of each learner
+
     for i in 0..n-1
-      puts "#{i+1}-th fold"
-      test_i(ls, i)
+      fs = test_i(ls, i)
+      printf("%3d %s\n", i+1, fs.map{|f| sprintf("%10.5e", f)}.join(" "))
+      for j in 0..ls.size-1
+        afs[j] += fs[j]
+      end
     end
+    afs.map!{|f| f /= n.to_i}
+    puts "Ave #{afs.map{|af| sprintf("%10.5e", af)}.join(" ")}"
   end
 
   #### test the i-th fold ####
   def test_i(ls, i)
-    tr = @sets[i]
-    te = @data.data - tr
+    tr = @sets[i]          # training set
+    te = @data.data - tr   # test set
+    fs = [] # averaged f-measures
 
     for i in 0..ls.size-1
-      puts "-- #{i+1}-th learner"
-
       # reset
       ls[i].reset(@data.property)
 
       # learn
       ls[i].learn(tr)
 
-      # self test
-      puts "-- test by training set"
-      test_by(ls[i], tr)
-
       # test
-      puts "-- test by test set"
-      test_by(ls[i], te)
+      f = test_by(ls[i], te)  # f-measure
+      fs.push(f)
     end
+
+    fs
   end
 
   #### test lnr by te ####
   def test_by(lnr, te)
+    # test
     pred = Hash.new(0)
     te.each do |datum|
       dc = datum[0]               # true class
@@ -174,10 +178,35 @@ class MyTester
       pred[[dc, pc]] += 1
     end
 
-    # result
-    pred.keys.sort.each do |key|
-      puts "-- #{key} #{pred[key]}"
+    # f-measures
+    @c = @data.property[0]   # # classes
+    ave_f = 0                # average f-measure for all c
+
+    for c in 0..@c-1       # positive class
+      # {true, false} * {positive, negative}
+      tp = 0
+      tn = 0
+      fp = 0
+      fn = 0
+      pred.keys.each do |key|
+        tc = key[0] # true class
+        pc = key[1] # predicted class
+        n = pred[key]
+        tp += n if tc == c && pc == c
+        tn += n if tc != c && pc != c
+        fp += n if tc != c && pc == c
+        fn += n if tc == c && pc != c
+      end
+
+      # recall, presision
+      rec = tp / (tp + fn).to_f
+      pre = tp / (tp + fp).to_f
+
+      # f-measure
+      f = 2 * rec * pre / (rec + pre)
+      ave_f += f
     end
+    ave_f /= @c.to_f
   end
 end
 
@@ -248,4 +277,4 @@ l0 = MyLearner.new         # random
 l1 = MyDisjLearner.new     # disj learner
 
 # 10-fold closs validation
-t.test([l1], @n)
+t.test([l0, l1], @n)

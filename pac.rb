@@ -105,6 +105,12 @@ class MyLearner
     @c = prop.shift # # class
     @n = prop.size  # # attributes
     @v = prop       # # values of each attribute
+
+    init
+  end
+
+  #### initialize ####
+  def init
   end
 
   #### show ####
@@ -113,6 +119,13 @@ class MyLearner
 
   #### learn from data ####
   def learn(data)
+    data.each do |datum|
+      dc = datum[0]
+      da = datum[1..@n]
+      learn_i(dc, da)
+    end
+  end
+  def learn_i(dc, da)
   end
 
   #### predict ####
@@ -237,11 +250,8 @@ end
 # disj learner
 ################################################################################
 class MyDisjLearner < MyLearner
-  #### reset ####
-  def reset(prop)
-    @c = prop[0]      # # class
-    @n = prop.size-1  # # attributes
-    @v = prop[1..@n]  # # values of each attribute
+  #### init ####
+  def init
     @disj = Array.new(@c-1){ |c|
       Array.new(@n){|i| Array.new(@v[i]){|v| v}}  # disj for class c
     }
@@ -260,17 +270,12 @@ class MyDisjLearner < MyLearner
   end
 
   #### learn ####
-  def learn(data)
-    data.each do |datum|
-      dc = datum[0]               # true class
-      da = datum[1..datum.size-1] # attributes
-
-      # remove da from disj[c != dc]
-      for c in 0..@c-2
-        next if c == dc
-        for i in 0..@n-1
-          @disj[c][i] -= [da[i]]
-        end
+  def learn_i(dc, da)
+    # remove da from disj[c != dc]
+    for c in 0..@c-2
+      next if c == dc
+      for i in 0..@n-1
+        @disj[c][i] -= [da[i]]
       end
     end
   end
@@ -290,8 +295,63 @@ end
 # dl learner
 ################################################################################
 class MyDLLearner < MyLearner
+  #### new ####
   def initialize(k)
     @k = k
+  end
+
+  #### learn ####
+  def learn(data)
+    # 
+    s = Array.new(@c)
+  end
+end
+
+################################################################################
+# Naive Bayes
+################################################################################
+class MyNaiveBayesLearner < MyLearner
+  #### overwrite init ####
+  def init
+    @nc = Array.new(@c){|c| 0} # #{C = c}
+    @nciv = Array.new(@c){|c|
+      Array.new(@n){|i| Array.new(@v[i]){|v| 0}} # #{C=c, x_i = v}
+    }
+  end
+
+  #### overwrite learn_i ####
+  def learn_i(dc, da)
+    @nc[dc] += 1
+    for i in 0..@n-1
+      @nciv[dc][i][da[i]] += 1
+    end
+  end
+
+  #### overwirte predict ####
+  def predict(da)
+    # log p(da | c)
+    lpc = Array.new(@c){|c| 0}
+    for c in 0..@c-1
+      for i in 0..@n-1
+        lpc[c] += Math.log(@nciv[c][i][da[i]]) - Math.log(@nc[c])
+      end
+    end
+
+    # log p(c)
+    n = 0
+    @nc.each{|c| n += c}
+    lpc[c] += Math.log(@nc[c]) - Math.log(n) 
+
+    # max_c = argmax_{c} log p(da | c) + log p(c)
+    max_c = 0
+    max_l = lpc[0]
+    for c in 1..@c-1
+      if max_l < lpc[c]
+        max_c = c
+        max_l = lpc[c]
+      end
+    end
+    max_c
   end
 end
 
@@ -300,9 +360,9 @@ end
 ################################################################################
 # learners
 ls = []
-ls.push(MyLearner.new)         # random
-ls.push(MyDisjLearner.new)     # disj learner
-ls.push(MyDLLearner.new(2))    # 2 DL learner
+ls.push(MyLearner.new)                   # random
+ls.push(MyDisjLearner.new)               # disj learner
+ls.push(MyNaiveBayesLearner.new)         # naive Bayes
 
 # repeat n-fold closs validation m times
 t = MyTester.new(@file)

@@ -4,7 +4,8 @@
 # default
 ################################################################################
 @file = "data.txt"
-@n = 5
+@n = 10
+@m = 5
 
 ################################################################################
 # Arguments
@@ -16,8 +17,11 @@ OptionParser.new { |opts|
     puts opts
     exit
   }
-  opts.on("-n [int]","--n-fold","# folds") { |f|
+  opts.on("-n [int]", "# folds of one cross-validation") { |f|
     @n = f.to_i
+  }
+  opts.on("-m [int]", "# cross-validations") { |f|
+    @m = f.to_i
   }
   # parse
   opts.parse!(ARGV)
@@ -34,9 +38,8 @@ class MyGenerator
 end
 
 ################################################################################
-# classes
+# data
 ################################################################################
-######## dataset ########
 class MyData
   #### new ####
   def initialize(file)
@@ -93,14 +96,10 @@ class MyData
   end
 end
 
-######## all learner must have the following methods ########
+################################################################################
+# base learner
+################################################################################
 class MyLearner
-  def initizlize
-    @c = 0
-    @n = 0
-    @v = []
-  end
-
   #### reset learner: arg = # values of each attributes ####
   def reset(prop)
     @c = prop.shift # # class
@@ -122,7 +121,9 @@ class MyLearner
   end
 end
 
-######## test ########
+################################################################################
+# tester
+################################################################################
 class MyTester
   #### new ####
   def initialize(file)
@@ -130,24 +131,46 @@ class MyTester
     @sets = nil
   end
 
-  #### test learners by n-fold closs validation ####
-  def test(ls, n)
+  #### test : m * n-ford cross validation ####
+  def test(ls, n, m)
+    puts "#{n}-fold cross validation * #{m} retry"
+    puts "----------------------------------------"
+    afs = Array.new(ls.size){|i| 0}
+    # repeat cv m times
+    for i in 1..m
+      puts "Cross Validation #{i}"
+      fs = cv(ls, n)
+      for j in 0..ls.size-1
+        afs[j] += fs[j]
+      end
+      puts "----------------------------------------"
+    end
+    afs.map!{|f| f /= m.to_f}
+    puts "Ave #{afs.map{|af| sprintf("%10.5e", af)}.join(" ")}"
+
+    afs
+  end
+
+  #### n-fold cross validation ####
+  def cv(ls, n)
     @sets = @data.split(n)           # testing datasets
     afs = Array.new(ls.size){|i| 0}  # averaged f-measures of each learner
 
     for i in 0..n-1
-      fs = test_i(ls, i)
+      fs = fold(ls, i)
       printf("%3d %s\n", i+1, fs.map{|f| sprintf("%10.5e", f)}.join(" "))
       for j in 0..ls.size-1
         afs[j] += fs[j]
       end
     end
-    afs.map!{|f| f /= n.to_i}
+    afs.map!{|f| f /= n.to_f}
     puts "Ave #{afs.map{|af| sprintf("%10.5e", af)}.join(" ")}"
+
+    afs
   end
 
-  #### test the i-th fold ####
-  def test_i(ls, i)
+  #### i-th fold ####
+  def fold(ls, i)
     tr = @sets[i]          # training set
     te = @data.data - tr   # test set
     fs = [] # averaged f-measures
@@ -189,8 +212,8 @@ class MyTester
       fp = 0
       fn = 0
       pred.keys.each do |key|
-        tc = key[0] # true class
-        pc = key[1] # predicted class
+        tc = key[0]        # true class
+        pc = key[1]        # predicted class
         n = pred[key]
         tp += n if tc == c && pc == c
         tn += n if tc != c && pc != c
@@ -210,15 +233,10 @@ class MyTester
   end
 end
 
-#### disjunctive expression learner ####
-class MyDisjLearner #< MyLearner
-  def initilize
-    @c = 0
-    @n = 0
-    @v = []
-    @disj = []
-  end
-
+################################################################################
+# disj learner
+################################################################################
+class MyDisjLearner < MyLearner
   #### reset ####
   def reset(prop)
     @c = prop[0]      # # class
@@ -269,12 +287,23 @@ class MyDisjLearner #< MyLearner
 end
 
 ################################################################################
+# dl learner
+################################################################################
+class MyDLLearner < MyLearner
+  def initialize(k)
+    @k = k
+  end
+end
+
+################################################################################
 # main
 ################################################################################
+# learners
+ls = []
+ls.push(MyLearner.new)         # random
+ls.push(MyDisjLearner.new)     # disj learner
+ls.push(MyDLLearner.new(2))    # 2 DL learner
+
+# repeat n-fold closs validation m times
 t = MyTester.new(@file)
-
-l0 = MyLearner.new         # random
-l1 = MyDisjLearner.new     # disj learner
-
-# 10-fold closs validation
-t.test([l0, l1], @n)
+t.test(ls, @n, @m)

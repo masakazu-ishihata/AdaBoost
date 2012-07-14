@@ -8,6 +8,8 @@
 @m = 5
 @k = 2
 @@swap = false
+@@ep = 0.1
+@@de = 0.1
 
 ################################################################################
 # Arguments
@@ -99,12 +101,20 @@ class MyData
     # class size
     c = @vals[0].size
     num = Array.new(c){|i| 0}
+    ptn = Hash.new([])
     @data.each do |datum|
-      num[datum[0]] += 1
+      dc = datum[0]
+      da = datum[1..datum.size-1]
+      num[dc] += 1
+      ptn[da].push(dc).uniq
     end
     for i in 0..c-1
       puts "class #{i+1} = #{num[i]}"
     end
+    ptn.each do |key|
+      puts "#{key} has multiple class" if ptn[key].size > 1
+    end
+
     @data[0..10].each do |datum|
       puts "#{datum}"
     end
@@ -118,10 +128,9 @@ end
 class MyLearner
   #### reset learner: arg = # values of each attributes ####
   def reset(prop)
-    @c = prop.shift # # class
-    @n = prop.size  # # attributes
-    @v = prop       # # values of each attribute
-
+    @c = prop[0]              # # class
+    @n = prop.size-1          # # attributes
+    @v = prop[1..prop.size-1] # # values of each attribute
     init
   end
 
@@ -129,15 +138,11 @@ class MyLearner
   def init
   end
 
-  #### show ####
-  def show
-  end
-
   #### learn from data ####
   def learn(data)
     data.each do |datum|
       dc = datum[0]
-      da = datum[1..@n]
+      da = datum[1..datum.size-1]
       learn_i(dc, da)
     end
   end
@@ -145,8 +150,55 @@ class MyLearner
   end
 
   #### predict ####
-  def predict(datum)
-    return rand(@c)
+  def predict(data)
+    pred = []
+
+    # predict for each data
+    data.each do |datum|
+      dc = datum[0]               # true class
+      da = datum[1..datum.size-1] #
+      pc = predict_i(da)        # predicted class
+      pred.push([dc, pc])
+    end
+
+    # f-measures
+    ave_f = 0                # average f-measure for all c
+
+    for c in 0..@c-1       # positive class
+      # {true, false} * {positive, negative}
+      tp = 0
+      tn = 0
+      fp = 0
+      fn = 0
+      pred.each do |tc, pc|
+        tp += 1 if tc == c && pc == c
+        tn += 1 if tc != c && pc != c
+        fp += 1 if tc != c && pc == c
+        fn += 1 if tc == c && pc != c
+      end
+
+      # recall, presision, f-measure
+      rec = tp / (tp + fn).to_f
+      pre = tp / (tp + fp).to_f
+
+      rec = 0 if tp + fn == 0
+      pre = 0 if tp + fp == 0
+
+      f = 2 * rec * pre / (rec + pre)
+      f = 0 if rec + pre == 0
+
+      ave_f += f
+    end
+
+    ave_f /= @c.to_f
+  end
+  def predict_i(da)
+    rand(@c)
+  end
+
+  #### pac ####
+  def pac(eps, del)
+    -1
   end
 end
 
@@ -162,7 +214,21 @@ class MyTester
 
   #### test : m * n-ford cross validation ####
   def test(ls, n, m)
+    puts "----------------------------------------"
     puts "#{n}-fold cross validation * #{m} retry"
+
+    # PAC
+    if @@swap
+      puts "# samples s = #{(@data.data.size / n.to_i).to_i}"
+    else
+      puts "# samples s = #{(@data.data.size / n.to_i).to_i * (n-1)}"
+    end
+    puts "PAC (e=#{@@ep}, d=#{@@de})?"
+    for i in 0..ls.size-1
+      ls[i].reset(@data.property)
+      puts "L[#{i+1}] is PAC if s > #{ls[i].pac(@@ep, @@de)}" if ls[i].pac(@@ep, @@de) > 0
+    end
+
     puts "----------------------------------------"
     afs = Array.new(ls.size){|i| 0}
     # repeat cv m times
@@ -218,103 +284,11 @@ class MyTester
       ls[i].learn(tr)
 
       # test
-      f = test_by(ls[i], te)  # f-measure
+      f = ls[i].predict(te)
       fs.push(f)
     end
 
     fs
-  end
-
-  #### test lnr by te ####
-  def test_by(lnr, te)
-    # test
-    pred = Hash.new(0)
-    te.each do |datum|
-      dc = datum[0]               # true class
-      da = datum[1..datum.size-1] #
-      pc = lnr.predict(da)        # predicted class
-      pred[[dc, pc]] += 1
-    end
-
-    # f-measures
-    @c = @data.property[0]   # # classes
-    ave_f = 0                # average f-measure for all c
-
-    for c in 0..@c-1       # positive class
-      # {true, false} * {positive, negative}
-      tp = 0
-      tn = 0
-      fp = 0
-      fn = 0
-      pred.keys.each do |key|
-        tc = key[0]        # true class
-        pc = key[1]        # predicted class
-        n = pred[key]
-        tp += n if tc == c && pc == c
-        tn += n if tc != c && pc != c
-        fp += n if tc != c && pc == c
-        fn += n if tc == c && pc != c
-      end
-
-      # recall, presision
-      rec = tp / (tp + fn).to_f
-      pre = tp / (tp + fp).to_f
-
-      rec = 0 if tp + fn == 0
-      pre = 0 if tp + fp == 0
-
-      # f-measure
-      f = 2 * rec * pre / (rec + pre)
-      f = 0 if rec + pre == 0
-
-      ave_f += f
-    end
-    ave_f /= @c.to_f
-  end
-end
-
-################################################################################
-# disj learner
-################################################################################
-class MyDisjLearner < MyLearner
-  #### init ####
-  def init
-    @disj = Array.new(@c-1){ |c|
-      Array.new(@n){|i| Array.new(@v[i]){|v| v}}  # disj for class c
-    }
-  end
-
-  #### show ####
-  def show
-    puts "# classes    = #{@c}"
-    puts "# attributes # #{@n}"
-    for c in 0..@c-2
-      puts "disj for class #{c}"
-      for i in 0..@n-1
-        puts "x_#{i} = #{@disj[c][i].join(" v ")}" if @disj[c][i].size > 0
-      end
-    end
-  end
-
-  #### learn ####
-  def learn_i(dc, da)
-    # remove da from disj[c != dc]
-    for c in 0..@c-2
-      next if c == dc
-      for i in 0..@n-1
-        @disj[c][i] -= [da[i]]
-      end
-    end
-  end
-
-  #### predict ####
-  def predict(da)
-    for c in 0..@c-2
-      for i in 0..@n-1
-        return c if @disj[c][i].index(da[i]) != nil
-      end
-    end
-    return @c-1
   end
 end
 
@@ -339,7 +313,7 @@ class MyNaiveBayesLearner < MyLearner
   end
 
   #### overwirte predict ####
-  def predict(da)
+  def predict_i(da)
     # log p(da | c)
     lpc = Array.new(@c){|c| 0}
     for c in 0..@c-1
@@ -367,6 +341,44 @@ class MyNaiveBayesLearner < MyLearner
 end
 
 ################################################################################
+# disj learner
+################################################################################
+class MyDisjLearner < MyLearner
+  #### init ####
+  def init
+    @disj = Array.new(@c-1){ |c|
+      Array.new(@n){|i| Array.new(@v[i]){|v| v}}  # disj for class c
+    }
+  end
+
+  #### learn ####
+  def learn_i(dc, da)
+    # remove da from disj[c != dc]
+    for c in 0..@c-2
+      next if c == dc
+      for i in 0..@n-1
+        @disj[c][i].delete(da[i])
+      end
+    end
+  end
+
+  #### predict ####
+  def predict_i(da)
+    for c in 0..@c-2
+      for i in 0..@n-1
+        return c if @disj[c][i].index(da[i]) != nil
+      end
+    end
+    return @c-1
+  end
+
+  #### pac ####
+  def pac(ep, de)
+    (@n * Math.log(3) - Math.log(de)) / ep
+  end
+end
+
+################################################################################
 # dl learner
 ################################################################################
 class MyDLLearner < MyLearner
@@ -380,6 +392,7 @@ class MyDLLearner < MyLearner
     @dl = [] # decision list
   end
 
+  #### overwrite show ####
   def show
     @dl.each do |t|
       p t
@@ -398,30 +411,29 @@ class MyDLLearner < MyLearner
 
     # learn decision list
     while eval(ss.map{|i| i.size}.join(" + ")) > 0
-      # get a best term for each c
+      # get the best term
       best = get_best_term(ss)
       t = best[0]
       e = best[1]
 
-      # remove explained samples
+      # remove explained samples by the best
       for c in 0..@c-1
         ss[c] -= e[c]
       end
 
-      # add t to decision list
+      # add the best to decision list
       m = 0
       for c in 1..@c-1
         m = c if e[c].size > e[m].size
       end
-
       @dl.push([t, m])
     end
   end
 
-  #### get the best term for s ####
+  #### get the best term ####
   def get_best_term(ss)
-    # unit clause
-    cs = []  # candidats
+    # generate unit cluases
+    cs = []
     for i in 0..@n-1
       for v in 0..@v[i]-1
         l = [i, v]             # literal
@@ -430,20 +442,21 @@ class MyDLLearner < MyLearner
       end
     end
 
-    # find the best
-    best = nil # best
+    # search the best
+    best = nil
     while (c = cs.shift) != nil
       t = c[0]
       e = c[1]
+
       best = c if best == nil || better?(e, best[1])
       next if t.size == @k
 
-      # enumerate children
+      # add children
       l = t.last
       for i in l[0]+1..@n-1
         for v in 0..@v[i]-1
-          cl = [i, v]
-          ce = explained(cl, e)
+          cl = [i, v]            # add a new literal
+          ce = explained(cl, e)  # remove samples not explained by cl
           cs.push([t.clone + [cl], ce]) if eval(ce.map{|i| i.size}.join(" + ")) > 0
         end
       end
@@ -452,16 +465,20 @@ class MyDLLearner < MyLearner
     best
   end
 
-  #### samples explained by a literal l (not a term!) ####
+  #### a is explained by a literal l ####
   def explained_la(l, a)
     a[ l[0] ] == l[1]
   end
+
+  #### a is explained by a term t ####
   def explained_ta(t, a)
     t.each do |l|
       return false if !explained_la(l, a)
     end
     return true
   end
+
+  #### samples explained by a literal ####
   def explained(l, ss)
     e = Array.new(@c){|i| [] }
 
@@ -478,10 +495,13 @@ class MyDLLearner < MyLearner
   def better?(e1, e2)
     ev1 = evaluate(e1)
     ev2 = evaluate(e2)
+
     ev1[0] < ev2[0] || (ev1[0] == ev2[0] && ev1[1] > ev2[1])
   end
 
   #### return [min, max] ####
+  # max : # samples in the target class
+  # min : # samples in NOT target class
   def evaluate(e)
     max = e[0].size
     for c in 1..@c-1
@@ -495,12 +515,23 @@ class MyDLLearner < MyLearner
   end
 
   #### overwrite predict ####
-  def predict(da)
+  def predict_i(da)
     @dl.each do |t, c|
       return c if explained_ta(t, da)
     end
     return 0 # by definition
   end
+
+  #### pac ####
+  def pac(ep, de)
+    (4 * @n * @n * (6 + Math.log(@n)) - Math.log(de)) / ep
+  end
+end
+
+################################################################################
+# AdaBoost
+################################################################################
+class AdaBoost
 end
 
 ################################################################################

@@ -9,6 +9,7 @@
 @k = 2
 @t = 100
 @@swap = false
+@@debug = false
 
 ################################################################################
 # Arguments
@@ -37,6 +38,9 @@ OptionParser.new { |opts|
   }
   opts.on("-s", "--swap", "swap te & tr size"){
     @@swap = true
+  }
+  opts.on("--debug", "debug mode"){
+    @@debug = true
   }
   # parse
   opts.parse!(ARGV)
@@ -85,7 +89,7 @@ class MyDataset
 
   #### # values of each attributes ####
   def property
-    @vals.map{|i| i.size}
+    [ @vals[0].size, @vals.map{ |i| i.size }[1..@vals.size-1] ]
   end
 
   #### split the dataset into n datasets ####
@@ -133,10 +137,12 @@ end
 ################################################################################
 class MyLearner
   #### reset learner: arg = # values of each attributes ####
-  def reset(prop)
-    @c = prop[0]              # # class
-    @n = prop.size-1          # # attributes
-    @v = prop[1..prop.size-1] # # values of each attribute
+  def reset(property)
+    @c = property[0]        # # class
+    @n = property[1].size   # # attributes
+    @v = property[1]        # # values of each attribute
+
+    # initialize learner
     init
   end
 
@@ -281,7 +287,7 @@ class MyTester
 
       # learn
       ls[j].learn(tr)
-#      puts "#{i}-fold #{j}-th learner -> #{ls[j].predict(tr)}"
+      puts "#{i+1}-fold #{j+1}-th learner -> #{ls[j].predict(tr)}" if @@debug
 
       # test
       f = ls[j].predict(te)
@@ -318,7 +324,7 @@ class MyNaiveBayesLearner < MyLearner
     lpc = Array.new(@c){|c| 0}
     for c in 0..@c-1
       for i in 0..@n-1
-        lpc[c] += Math.log(@nciv[c][i][da[i]]) - Math.log(@nc[c]) if @nciv[c][i][da[i]] > 0
+        lpc[c] += Math.log(@nciv[c][i][da[i]] + 1e-10) - Math.log(@nc[c])
       end
     end
 
@@ -339,6 +345,19 @@ class MyNaiveBayesLearner < MyLearner
       end
     end
     max_c
+  end
+
+  #### for weighted setting ####
+  def learn_w(data, weight)
+    for i in 0..data.size-1
+      learn_w_i(data[i].c, data[i].a, weight[i])
+    end
+  end
+  def learn_w_i(dc, da, w)
+    @nc[dc] += w
+    for i in 0..@n-1
+      @nciv[dc][i][da[i]] += w
+    end
   end
 end
 
@@ -529,8 +548,9 @@ class MyDLLearner < MyLearner
 end
 
 ################################################################################
-# AdaBoost : weak hypothesis = single decision rule
+# AdaBoost template
 ################################################################################
+#### simple weak learner ####
 class MyWeakLearner < MyLearner
   def initialize(i, v, c)
     @i = i
@@ -545,7 +565,9 @@ class MyWeakLearner < MyLearner
   end
 end
 
+#### adaboost ####
 class MyAdaBoost < MyLearner
+  #### new ####
   def initialize(t)
     @t = t
   end
@@ -556,6 +578,11 @@ class MyAdaBoost < MyLearner
     @as = []     # alphas : importance rate
     @wl = []     # weak learners
 
+    init_wl
+  end
+
+  #### init_wl ####
+  def init_wl
     # enumrate literals
     for i in 0..@n-1
       for v in 0..@v[i]-1
@@ -566,52 +593,7 @@ class MyAdaBoost < MyLearner
     end
   end
 
-  #### overwrite learn ####
-  def learn(data)
-    # initial weight
-    m = data.size
-    w = Array.new(m){|i| 1 / m.to_f}
-    t = 0
-
-    best_t = 0
-    best_e = m
-
-    begin
-      t += 1
-
-      h = best_wl(data, w)                 # best hypothesis
-      e = error(h, data, w)                # error
-      g = 0.5 - e                          # gamma : advantage
-      b = Math.sqrt( (1-2*g) / (1+2*g) )   # beta
-      b = 1e-10 if b == 0
-      a = -Math.log(b)                     # alpha : importance rate
-
-      break if a == 0
-
-      @hs.push(h)
-      @as.push(a)
-
-      # udate weights
-      e0 = 0.0
-      for i in 0..data.size-1
-        pc = predict_i(data[i].a)
-        w[i] *= b if data[i].c == pc
-        w[i] /= b if data[i].c != pc
-        e0 += 1    if data[i].c != pc
-      end
-
-      if e0 < best_e
-        best_t = t
-        best_e = e0
-      end
-    end while e0 > 0 && t < @t
-
-    # back to best
-    @hs = @hs[0..best_t]
-    @as = @as[0..best_t]
-  end
-
-  #### choose a best weak learner (hypothesis) ####
+  #### best_wl ####
   def best_wl(data, weight)
     best = nil
     min = 0
@@ -627,6 +609,68 @@ class MyAdaBoost < MyLearner
     best
   end
 
+  #### overwrite learn ####
+  def learn(data)
+    # initial weight
+    m = data.size
+    w = Array.new(m){|i| 1 / m.to_f}
+    t = 0
+
+    min_w = 1 / m.to_f
+    best_t = 0
+    best_e = m
+
+    begin
+      h = best_wl(data, w)                 # best hypothesis
+      e = error(h, data, w)                # error
+
+      # is less random
+      break if e >= 0.5
+
+      # is a strong learner (perfect)
+      if e < min_w
+        @hs = [h]
+        @as = [1]
+        best_t = 0
+        break
+      end
+
+      a = Math.log( (1-e) / e ) / 2
+      @hs.push(h)
+      @as.push(a)
+
+      # udate weights
+      e0 = 0
+      for i in 0..data.size-1
+        pc = predict_i(data[i].a)
+        w[i] *= Math.exp(-a) if data[i].c == pc
+        w[i] *= Math.exp(a)  if data[i].c != pc
+        min_w = w[i] if min_w > w[i]
+        e0 += 1 if data[i].c != pc
+      end
+      sum = eval( w.join(" + ") ) rescue break
+      w.map!{|w| w /= sum }
+      min_w /= sum
+
+      # best
+      if e0 < best_e
+        best_t = t
+        best_e = e0
+      end
+
+      # debug mode
+      if @@debug
+        printf("%3d:[%3d] ", t, best_t)
+        printf("f = %10.5e, ", predict(data))
+        printf("e = %10.5e, e0 = %10.5e\n", e, e0/m.to_f)
+      end
+    end while e0 > 0 && (t += 1) < @t
+
+    # back to best
+    @hs = @hs[0..best_t]
+    @as = @as[0..best_t]
+  end
+
   #### error ####
   def error(wl, data, weight)
     e = 0
@@ -640,8 +684,7 @@ class MyAdaBoost < MyLearner
   def predict_i(da)
     vote = Array.new(@c){|i| 0}
     for t in 0..@hs.size-1
-      pc = @hs[t].predict_i(da)
-      vote[pc] += @as[t]
+      vote[ @hs[t].predict_i(da) ] += @as[t]
     end
 
     m   = 0
@@ -658,24 +701,64 @@ class MyAdaBoost < MyLearner
 end
 
 ################################################################################
+# AdaBoost + weighted naive Bayes
+################################################################################
+class MyAdaNaiveBayes < MyAdaBoost
+  #### overwrite init_wl ####
+  def init_wl
+    @wl = []
+  end
+
+  #### overwrite best_wl ####
+  def best_wl(data, weight)
+    l = MyNaiveBayesLearner.new
+    l.reset([@c, @v])
+    l.learn_w(data, weight)
+    l
+  end
+end
+
+################################################################################
 # main
 ################################################################################
 # learners
 ls = []
-ls.push(MyLearner.new)
-puts "learner 1 : random"
+@rand = true
+@disj = true
+@dl   = true
+@ad   = true
+@nb   = true
+@adnb = true
 
-ls.push(MyNaiveBayesLearner.new)
-puts "learner #{ls.size} : naive Bayes"
+if @rand
+  ls.push(MyLearner.new)
+  puts "learner #{ls.size} : random"
+end
 
-ls.push(MyDisjLearner.new)
-puts "learner #{ls.size} : Disj learner"
+if @disj
+  ls.push(MyDisjLearner.new)
+  puts "learner #{ls.size} : Disj learner"
+end
 
-ls.push(MyDLLearner.new(@k))
-puts "learner #{ls.size} : #{@k}-DL learner"
+if @dl
+  ls.push(MyDLLearner.new(@k))
+  puts "learner #{ls.size} : #{@k}-DL learner"
+end
 
-ls.push(MyAdaBoost.new(@t))
-puts "learner #{ls.size} : AdaBoost (#{@t})"
+if @ad
+  ls.push(MyAdaBoost.new(@t))
+  puts "learner #{ls.size} : AdaBoost + 1-d (#{@t})"
+end
+
+if @nb
+  ls.push(MyNaiveBayesLearner.new)
+  puts "learner #{ls.size} : naive Bayes"
+end
+
+if @adnb
+  ls.push(MyAdaNaiveBayes.new(@t))
+  puts "learner #{ls.size} : AdaBoost + NB  (#{@t})"
+end
 
 # repeat n-fold closs validation m times
 t = MyTester.new(@file)

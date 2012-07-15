@@ -55,10 +55,6 @@ class MyData
     @a = ary[1..ary.size-1]
   end
   attr_reader :c, :a
-
-  def show
-    puts "#{@c} : #{a}"
-  end
 end
 class MyDataset
   #### new ####
@@ -133,83 +129,6 @@ class MyDataset
 end
 
 ################################################################################
-# base learner
-################################################################################
-class MyLearner
-  #### reset learner: arg = # values of each attributes ####
-  def reset(property)
-    @c = property[0]        # # class
-    @n = property[1].size   # # attributes
-    @v = property[1]        # # values of each attribute
-
-    # initialize learner
-    init
-  end
-
-  #### initialize ####
-  def init
-  end
-
-  #### learn from data ####
-  def learn(data)
-    data.each do |datum|
-      learn_i(datum.c, datum.a)
-    end
-  end
-  def learn_i(dc, da)
-  end
-
-  #### predict ####
-  def predict(data)
-    pred = []
-
-    # predict for each data
-    data.each do |datum|
-      pred.push([datum.c, predict_i(datum.a)])
-    end
-
-    # f-measures
-    ave_f = 0                # average f-measure for all c
-
-    for c in 0..@c-1       # positive class
-      # {true, false} * {positive, negative}
-      tp = 0
-      tn = 0
-      fp = 0
-      fn = 0
-      pred.each do |tc, pc|
-        tp += 1 if tc == c && pc == c
-        tn += 1 if tc != c && pc != c
-        fp += 1 if tc != c && pc == c
-        fn += 1 if tc == c && pc != c
-      end
-
-      # recall, presision, f-measure
-      rec = tp / (tp + fn).to_f
-      pre = tp / (tp + fp).to_f
-
-      rec = 0 if tp + fn == 0
-      pre = 0 if tp + fp == 0
-
-      f = 2 * rec * pre / (rec + pre) if (rec + pre) > 0
-      f = 0 if rec + pre == 0
-
-      ave_f += f
-    end
-
-    ave_f /= @c.to_f
-  end
-  def predict_i(da)
-    rand(@c)
-  end
-
-  #### pac ####
-  def pac(eps, del)
-    -1
-  end
-end
-
-################################################################################
 # tester
 ################################################################################
 class MyTester
@@ -226,16 +145,9 @@ class MyTester
     puts "----------------------------------------"
     puts "#{n}-fold cross validation * #{m} retry"
 
-    # PAC
-    if @@swap
-      puts "# samples s = #{(@dset.size / n.to_i).to_i}"
-    else
-      puts "# samples s = #{(@dset.size / n.to_i).to_i * (n-1)}"
-    end
-
+    # repeat cv m times
     puts "----------------------------------------"
     afs = Array.new(ls.size){|i| 0}
-    # repeat cv m times
     for i in 1..m
       puts "Cross Validation #{i}"
       fs = cv(ls, n)
@@ -299,8 +211,87 @@ class MyTester
 end
 
 ################################################################################
-# Naive Bayes
+# learners
 ################################################################################
+########################################
+# base learner
+########################################
+class MyLearner
+  #### reset learner: arg = # values of each attributes ####
+  def reset(property)
+    @c = property[0]        # # class
+    @n = property[1].size   # # attributes
+    @v = property[1]        # # values of each attribute
+
+    # initialize learner
+    init
+  end
+
+  #### initialize ####
+  def init
+  end
+
+  #### show ####
+  def show
+  end
+
+  #### learn from data ####
+  def learn(data)
+    data.each do |datum|
+      learn_i(datum.c, datum.a)
+    end
+  end
+  def learn_i(dc, da)
+  end
+
+  #### predict ####
+  def predict(data)
+    pred = []
+
+    # predict for each data
+    data.each do |datum|
+      pred.push([datum.c, predict_i(datum.a)])
+    end
+
+    # f-measures
+    ave_f = 0                # average f-measure for all c
+
+    for c in 0..@c-1       # positive class
+      # {true, false} * {positive, negative}
+      tp = 0
+      tn = 0
+      fp = 0
+      fn = 0
+      pred.each do |tc, pc|
+        tp += 1 if tc == c && pc == c
+        tn += 1 if tc != c && pc != c
+        fp += 1 if tc != c && pc == c
+        fn += 1 if tc == c && pc != c
+      end
+
+      # recall, presision, f-measure
+      rec = tp / (tp + fn).to_f
+      pre = tp / (tp + fp).to_f
+
+      rec = 0 if tp + fn == 0
+      pre = 0 if tp + fp == 0
+
+      f = 2 * rec * pre / (rec + pre) if (rec + pre) > 0
+      f = 0 if rec + pre == 0
+
+      ave_f += f
+    end
+
+    ave_f /= @c.to_f
+  end
+  def predict_i(da)
+    rand(@c)
+  end
+end
+
+########################################
+# Naive Bayes
+########################################
 class MyNaiveBayesLearner < MyLearner
   #### overwrite init ####
   def init
@@ -308,6 +299,17 @@ class MyNaiveBayesLearner < MyLearner
     @nciv = Array.new(@c){|c|
       Array.new(@n){|i| Array.new(@v[i]){|v| 0}} # #{C=c, x_i = v}
     }
+  end
+
+  #### overwrite show ####
+  def show
+    n = eval( @nc.join(" + ") )
+    puts "p(c) = [#{@nc.map{|c| sprintf("%8.3e",c/n.to_f)}.join(", ")}]"
+    for i in 0..@n-1
+      for c in 0..@c-1
+        puts "p(A#{i} | #{c}) = [#{@nciv[c][i].map{ |n| sprintf("%8.3e", n / @nc[c].to_f) }.join(", ")}]"
+      end
+    end
   end
 
   #### overwrite learn_i ####
@@ -361,18 +363,28 @@ class MyNaiveBayesLearner < MyLearner
   end
 end
 
-################################################################################
+########################################
 # disj learner
-################################################################################
+########################################
 class MyDisjLearner < MyLearner
-  #### init ####
+  #### overwrite init ####
   def init
     @disj = Array.new(@c-1){ |c|
       Array.new(@n){|i| Array.new(@v[i]){|v| v}}  # disj for class c
     }
   end
 
-  #### learn ####
+  #### overwrite show ####
+  def show
+    for c in 0..@c-2
+      puts "Disjunction for #{c}"
+      for i in 0..@n-1
+        puts "A#{i} = #{@disj[c][i].join(" v ")} [#{@v[i]}]" if @disj[c][i].size > 0
+      end
+    end
+  end
+
+  #### overwrite learn ####
   def learn_i(dc, da)
     # remove da from disj[c != dc]
     for c in 0..@c-2
@@ -383,7 +395,7 @@ class MyDisjLearner < MyLearner
     end
   end
 
-  #### predict ####
+  #### overwrite predict ####
   def predict_i(da)
     for c in 0..@c-2
       for i in 0..@n-1
@@ -392,16 +404,11 @@ class MyDisjLearner < MyLearner
     end
     return @c-1
   end
-
-  #### pac ####
-  def pac(ep, de)
-    (@n * Math.log(3) - Math.log(de)) / ep
-  end
 end
 
-################################################################################
+########################################
 # dl learner
-################################################################################
+########################################
 class MyDLLearner < MyLearner
   #### new ####
   def initialize(k)
@@ -415,8 +422,10 @@ class MyDLLearner < MyLearner
 
   #### overwrite show ####
   def show
-    @dl.each do |t|
-      p t
+    @dl.each do |r|
+      t = r[0]
+      c = r[1]
+      puts "[#{t.map{|l| "A#{l[0]} = #{l[1]}"}.join(", ")}] => #{c}"
     end
   end
 
@@ -540,22 +549,21 @@ class MyDLLearner < MyLearner
     end
     return 0 # by definition
   end
-
-  #### pac ####
-  def pac(ep, de)
-    (4 * @n * @n * (6 + Math.log(@n)) - Math.log(de)) / ep
-  end
 end
 
-################################################################################
-# AdaBoost template
-################################################################################
+########################################
+# base AdaBoost
+########################################
 #### simple weak learner ####
 class MyWeakLearner < MyLearner
   def initialize(i, v, c)
     @i = i
     @v = v
     @c = c
+  end
+
+  def show
+    puts "[A#{@i} = #{@v}] => #{@c}"
   end
 
   def predict_i(da)
@@ -570,6 +578,14 @@ class MyAdaBoost < MyLearner
   #### new ####
   def initialize(t)
     @t = t
+  end
+
+  #### overwrite show ####
+  def show
+    for t in 0..@hs.size-1
+      printf("%3d, %10.5e\n", t+1, @as[t])
+      @hs[t].show
+    end
   end
 
   #### overwrite init ####
@@ -700,9 +716,9 @@ class MyAdaBoost < MyLearner
   end
 end
 
-################################################################################
+########################################
 # AdaBoost + weighted naive Bayes
-################################################################################
+########################################
 class MyAdaNaiveBayes < MyAdaBoost
   #### overwrite init_wl ####
   def init_wl

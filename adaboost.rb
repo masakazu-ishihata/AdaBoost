@@ -658,14 +658,20 @@ class MyAdaBoost < MyLearner
       # udate weights
       e0 = 0
       for i in 0..data.size-1
-#        pc = h.predict_i(data[i].a)
+#        pc = predict_i(data[i].a)
         pc = h.predict_i(data[i].a)
         w[i] *= Math.exp(-a) if data[i].c == pc
         w[i] *= Math.exp(a)  if data[i].c != pc
         min_w = w[i] if min_w > w[i]
         e0 += 1 if data[i].c != pc
       end
-      sum = eval( w.join(" + ") ) rescue break
+
+#      sum = eval( w.join(" + ") ) rescue break
+      sum = 0
+      for i in 0..data.size-1
+        sum += w[i]
+      end
+
       w.map!{|w| w /= sum }
       min_w /= sum
 
@@ -741,9 +747,9 @@ end
 # learners
 ls = []
 @rand = true
-@disj = true
-@dl   = true
-@ad   = true
+@disj = false
+@dl   = false
+@ad   = false
 @nb   = true
 @adnb = true
 

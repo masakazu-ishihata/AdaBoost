@@ -658,7 +658,8 @@ class MyAdaBoost < MyLearner
       # udate weights
       e0 = 0
       for i in 0..data.size-1
-        pc = predict_i(data[i].a)
+#        pc = h.predict_i(data[i].a)
+        pc = h.predict_i(data[i].a)
         w[i] *= Math.exp(-a) if data[i].c == pc
         w[i] *= Math.exp(a)  if data[i].c != pc
         min_w = w[i] if min_w > w[i]
